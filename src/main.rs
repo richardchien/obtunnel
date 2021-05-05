@@ -1,34 +1,15 @@
-use std::io::Read;
+extern crate obsdn;
 
-use tun::Device;
+use futures::channel::mpsc;
+use obsdn::{link::oblink_task, tun::tun_task};
 
-const MAGIC_PREFIX: &'static str = "(>_<)...";
-const MAX_MSG_LEN: usize = 4500;
-const MTU: usize = (MAX_MSG_LEN - MAGIC_PREFIX.len()) * 3 / 4;
+#[tokio::main]
+async fn main() {
+    let (oblink_send_chan_tx, oblink_send_chan_rx) = mpsc::unbounded(); // for sending packets through OneBot
+    let (oblink_recv_chan_tx, oblink_recv_chan_rx) = mpsc::unbounded(); // for receiving packets from OneBot
 
-fn main() {
-    let mut config = tun::Configuration::default();
-    config
-        .address((172, 29, 0, 1))
-        .netmask((255, 255, 255, 0))
-        .mtu(MTU as i32)
-        .up();
+    let oblink_task_fut = oblink_task(oblink_send_chan_rx, oblink_recv_chan_tx);
+    let tun_task_fut = tun_task(oblink_send_chan_tx, oblink_recv_chan_rx);
 
-    #[cfg(target_os = "linux")]
-    config.platform(|config| {
-        config.packet_information(true);
-    });
-
-    let mut dev = tun::create(&config).unwrap();
-    println!("TUN device created:");
-    println!("  Name: {}", dev.name());
-    println!("  Address: {:?}", dev.address().unwrap());
-    println!("  Netmask: {:?}", dev.netmask().unwrap());
-    println!("  MTU: {:?}", dev.mtu().unwrap());
-
-    let mut buf = [0; 4096];
-    loop {
-        let amount = dev.read(&mut buf).unwrap();
-        println!("{}", hex::encode_upper(&buf[4..amount]));
-    }
+    tokio::join!(oblink_task_fut, tun_task_fut);
 }
