@@ -1,0 +1,10 @@
+[package]
+name = "onebot-sdn"
+version = "0.1.0"
+authors = ["Richard Chien <richardchienthebest@gmail.com>"]
+edition = "2018"
+
+[dependencies]
+tun = { version = "0.5", features = ["async"] }
+hex = "0.4"
+tokio-tungstenite = "0.14"
