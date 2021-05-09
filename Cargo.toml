@@ -1,5 +1,5 @@
 [package]
-name = "obsdn"
+name = "obtunnel"
 version = "0.1.0"
 authors = ["Richard Chien <richardchienthebest@gmail.com>"]
 edition = "2018"

@@ -1,7 +1,7 @@
-extern crate obsdn;
+extern crate obtunnel;
 
 use futures::channel::mpsc;
-use obsdn::{link::oblink_task, tun::tun_task};
+use obtunnel::{link::oblink_task, tun::tun_task};
 
 #[tokio::main]
 async fn main() {
