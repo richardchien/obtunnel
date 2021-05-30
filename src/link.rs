@@ -1,7 +1,12 @@
+use std::collections::HashMap;
+
 use futures::{channel::mpsc, StreamExt};
+use packet::ip;
 use serde_json::Value as JsonValue;
 use tokio_tungstenite::connect_async as ws_connect_async;
 use tun::TunPacket;
+
+use crate::config;
 
 #[derive(Debug)]
 pub struct Frame {
@@ -11,12 +16,16 @@ pub struct Frame {
 }
 
 impl Frame {
-    pub fn new(src_user_id: i64, dst_user_id: i64, packet: TunPacket) -> Self {
+    pub fn new(source: String, destination: String, packet: TunPacket) -> Self {
         Self {
-            source: src_user_id.to_string(),
-            destination: dst_user_id.to_string(),
+            source,
+            destination,
             packet,
         }
+    }
+
+    pub fn new_for_send(destination: String, packet: TunPacket) -> Self {
+        Self::new("".to_string(), destination, packet)
     }
 
     pub fn source(&self) -> &str {
@@ -30,20 +39,62 @@ impl Frame {
     pub fn packet(&self) -> &TunPacket {
         &self.packet
     }
+
+    pub fn into_packet(self) -> TunPacket {
+        self.packet
+    }
 }
 
-const ONEBOT_WS_URL: &'static str = "ws://127.0.0.1:6701/"; // TODO: put in config file
-
+/// Setup OneBot connection and forward OBLINK frame between
+/// OneBot impl and OBLINK layer.
 pub async fn oblink_task(
-    send_chan: mpsc::UnboundedReceiver<Frame>,
-    recv_chan: mpsc::UnboundedSender<Frame>,
+    oblink_send: mpsc::UnboundedReceiver<Frame>,
+    oblink_recv: mpsc::UnboundedSender<Frame>,
 ) {
-    let url = url::Url::parse(ONEBOT_WS_URL).unwrap();
-    let (onebot_stream, _) = ws_connect_async(url).await.unwrap();
-    let (onebot_tx, onebot_rx) = onebot_stream.split();
+    let url = url::Url::parse(config::ONEBOT_WS_URL).unwrap();
+    let (ob_stream, _) = ws_connect_async(url).await.unwrap();
+    let (ob_tx, ob_rx) = ob_stream.split();
 
-    let onebot_rx_fut = onebot_rx.for_each(|ws_message| async move {
-        let payload = ws_message.unwrap().into_data();
+    tokio::join!(
+        oblink_to_ob(oblink_send, ob_tx),
+        ob_to_oblink(ob_rx, oblink_recv)
+    );
+}
+
+type ObLinkSource = mpsc::UnboundedReceiver<Frame>;
+type ObLinkSink = mpsc::UnboundedSender<Frame>;
+type ObSource = futures::stream::SplitStream<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+>;
+type ObSink = futures::stream::SplitSink<
+    tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>,
+    tokio_tungstenite::tungstenite::Message,
+>;
+
+/// Forward OBLINK frame from OBLINK layer to OneBot impl.
+async fn oblink_to_ob(mut oblink: ObLinkSource, mut ob: ObSink) {
+    // TODO: move to Config struct
+    use maplit::hashmap;
+    let route_table: HashMap<&str, i64> = hashmap! {
+        "172.29.0.1" => 3281334718,
+        "172.29.0.2" => 2910007356,
+    };
+
+    // TODO: maybe to process packets concurrently in the future
+    while let Some(frame) = oblink.next().await {
+        if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(frame.packet().get_bytes()) {
+            // TODO: lookup route table for dest QQ, convert ip_pkt.payload() to oblink frame
+        } else {
+            continue;
+        }
+    }
+    panic!("oblink_to_ob stopped unexpectedly");
+}
+
+/// Forward OBLINK frame from OneBot impl to OBLINK layer.
+async fn ob_to_oblink(mut ob: ObSource, mut oblink: ObLinkSink) {
+    while let Some(Ok(ws_msg)) = ob.next().await {
+        let payload = ws_msg.into_data();
         let event: JsonValue = serde_json::from_slice(&payload).unwrap();
         if let (Some("message"), Some(user_id), Some(self_id), Some(message)) = (
             event["post_type"].as_str(),
@@ -51,21 +102,9 @@ pub async fn oblink_task(
             event["self_id"].as_i64(),
             event["message"].as_str(),
         ) {
-            // println!(
-            //     "{:?}",
-            //     Frame {
-            //         src_user_id: user_id.to_string(),
-            //         dst_user_id: self_id.to_string(),
-            //         packet: TunPacket::new(bytes),
-            //     }
-            // );
             println!("{}", message);
+            // TODO: check the message prefix, convert oblink frame to ip packet
         }
-    });
-
-    let send_chan_fut = send_chan.for_each(|frame| async move {
-        println!("{:?}", frame);
-    });
-
-    tokio::join!(onebot_rx_fut, send_chan_fut);
+    }
+    panic!("ob_to_oblink stopped unexpectedly");
 }
