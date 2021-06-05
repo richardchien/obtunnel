@@ -1,10 +1,6 @@
-use futures::{
-    channel::mpsc,
-    stream::{SplitSink, SplitStream},
-    SinkExt, StreamExt,
-};
+use futures::{channel::mpsc, SinkExt, StreamExt};
 use packet::{ip, Packet};
-use tun::{AsyncDevice, Device, TunPacket, TunPacketCodec};
+use tun::Device;
 
 use crate::{config, link::Frame};
 
@@ -44,11 +40,17 @@ pub async fn tun_task(
     );
 }
 
+type ObLinkSource = mpsc::UnboundedReceiver<Frame>;
+type ObLinkSink = mpsc::UnboundedSender<Frame>;
+type TunSource =
+    futures::stream::SplitStream<tokio_util::codec::Framed<tun::AsyncDevice, tun::TunPacketCodec>>;
+type TunSink = futures::stream::SplitSink<
+    tokio_util::codec::Framed<tun::AsyncDevice, tun::TunPacketCodec>,
+    tun::TunPacket,
+>;
+
 /// Forward TUN packets from TUN device to OBLINK layer.
-async fn tun_to_oblink(
-    mut tun: SplitStream<tokio_util::codec::Framed<AsyncDevice, TunPacketCodec>>,
-    mut oblink: mpsc::UnboundedSender<Frame>,
-) {
+async fn tun_to_oblink(mut tun: TunSource, mut oblink: ObLinkSink) {
     // TODO: maybe to process packets concurrently in the future
     while let Some(Ok(packet)) = tun.next().await {
         if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(packet.get_bytes()) {
@@ -71,10 +73,7 @@ async fn tun_to_oblink(
 }
 
 /// Forward TUN packets from OBLINK layer to TUN device.
-async fn oblink_to_tun(
-    mut oblink: mpsc::UnboundedReceiver<Frame>,
-    mut tun: SplitSink<tokio_util::codec::Framed<AsyncDevice, TunPacketCodec>, TunPacket>,
-) {
+async fn oblink_to_tun(mut oblink: ObLinkSource, mut tun: TunSink) {
     while let Some(frame) = oblink.next().await {
         tun.send(frame.into_packet()).await.unwrap();
     }
