@@ -1,6 +1,9 @@
+use std::collections::HashMap;
+
 use futures::{channel::mpsc, SinkExt, StreamExt};
+use maplit::hashmap;
 use packet::{ip, Packet};
-use tun::Device;
+use tun::{Device, TunPacket};
 
 use crate::{config, link::Frame};
 
@@ -13,6 +16,7 @@ pub async fn tun_task(
     let mut tun_cfg = tun::Configuration::default();
     tun_cfg
         .address((172, 29, 0, 1))
+        // .address((172, 29, 0, 2))
         .netmask((255, 255, 255, 0))
         .mtu(config::MTU as i32)
         .up();
@@ -32,7 +36,28 @@ pub async fn tun_task(
         println!("  MTU: {:?}", tun_dev_ref.mtu().unwrap());
     }
 
-    let (tun_tx, tun_rx) = tun_dev.into_framed().split();
+    let (mut tun_tx, mut tun_rx) = tun_dev.into_framed().split();
+
+    // while let Some(Ok(packet)) = tun_rx.next().await {
+    //     if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(packet.get_bytes()) {
+    //         println!(
+    //             "send packet src: {}, dst: {}, data: {}",
+    //             ip_pkt.source(),
+    //             ip_pkt.destination(),
+    //             hex::encode_upper(packet.get_bytes())
+    //         );
+
+    //         if ip_pkt.source() == ip_pkt.destination() {
+    //             println!("packet for self");
+    //             tun_tx
+    //                 .send(TunPacket::new(packet.get_bytes().into()))
+    //                 .await
+    //                 .unwrap();
+    //         }
+    //     } else {
+    //         panic!("failed to parse TUN packet");
+    //     }
+    // }
 
     tokio::join!(
         tun_to_oblink(tun_rx, oblink_send),
@@ -51,20 +76,36 @@ type TunSink = futures::stream::SplitSink<
 
 /// Forward TUN packets from TUN device to OBLINK layer.
 async fn tun_to_oblink(mut tun: TunSource, mut oblink: ObLinkSink) {
+    // TODO: move to config file
+    let route_table: HashMap<String, String> = hashmap! {
+        "172.29.0.1".to_string() => "3281334718".to_string(),
+        "172.29.0.2".to_string() => "2910007356".to_string(),
+    };
+
     // TODO: maybe to process packets concurrently in the future
     while let Some(Ok(packet)) = tun.next().await {
         if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(packet.get_bytes()) {
             println!(
-                "Packet src: {}, dst: {}, data: {}",
+                "send packet src: {}, dst: {}, data: {}",
                 ip_pkt.source(),
                 ip_pkt.destination(),
-                hex::encode_upper(ip_pkt.payload())
+                hex::encode_upper(packet.get_bytes())
             );
-            // tun_tx.send(packet).await.unwrap();
-            oblink
-                .send(Frame::new_for_send("".to_string(), packet))
-                .await
-                .unwrap()
+
+            if ip_pkt.source() == ip_pkt.destination() {
+                println!("packet for self");
+                // TODO: send to self
+                // tun_tx.send(packet).await.unwrap();
+            }
+
+            if let Some(dest_user_id) = route_table.get(&ip_pkt.destination().to_string()) {
+                oblink
+                    .send(Frame::new_for_send(dest_user_id.to_owned(), packet))
+                    .await
+                    .unwrap();
+            } else {
+                println!("cannot find entry for the given dest IP in the route table");
+            }
         } else {
             panic!("failed to parse TUN packet");
         }
@@ -75,6 +116,7 @@ async fn tun_to_oblink(mut tun: TunSource, mut oblink: ObLinkSink) {
 /// Forward TUN packets from OBLINK layer to TUN device.
 async fn oblink_to_tun(mut oblink: ObLinkSource, mut tun: TunSink) {
     while let Some(frame) = oblink.next().await {
+        println!("oblink frame to tun: {:#x?}", frame);
         tun.send(frame.into_packet()).await.unwrap();
     }
     panic!("oblink_to_tun stopped unexpectedly");
