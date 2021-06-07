@@ -1,13 +1,11 @@
-use std::collections::HashMap;
-
+use anyhow::Result;
 use futures::{channel::mpsc, SinkExt, StreamExt};
-use maplit::hashmap;
 use packet::ip;
 use serde_json::{json, Value as JsonValue};
 use tokio_tungstenite::{connect_async as ws_connect_async, tungstenite};
 use tun::TunPacket;
 
-use crate::config;
+use crate::Config;
 
 /// OBLINK frame struct representation.
 #[derive(Debug)]
@@ -50,30 +48,25 @@ impl Frame {
 /// Setup OneBot connection and forward OBLINK frame between
 /// OneBot impl and OBLINK layer.
 pub async fn oblink_task(
+    config: &Config,
     oblink_send: mpsc::UnboundedReceiver<Frame>,
     oblink_recv: mpsc::UnboundedSender<Frame>,
-) {
-    // TODO: move to config file
-    let self_id = "3281334718".to_string();
-    // let self_id = "2910007356".to_string();
-    let ws_url_table: HashMap<String, String> = hashmap! {
-        "3281334718".to_string() => "ws://127.0.0.1:6701/".to_string(),
-        "2910007356".to_string() => "ws://127.0.0.1:6702/".to_string(),
-    };
-
+) -> Result<()> {
     let url = url::Url::parse(
-        ws_url_table
-            .get(&self_id)
+        config
+            .ws_url_table
+            .get(&config.self_user_id)
             .expect("cannot find entry for the given self_id in the WebSocket URL table"),
-    )
-    .unwrap();
-    let (ob_stream, _) = ws_connect_async(url).await.unwrap();
+    )?;
+    let (ob_stream, _) = ws_connect_async(url).await?;
     let (ob_tx, ob_rx) = ob_stream.split();
 
-    tokio::join!(
-        oblink_to_ob(oblink_send, ob_tx),
-        ob_to_oblink(ob_rx, oblink_recv)
-    );
+    tokio::try_join!(
+        oblink_to_ob(config, oblink_send, ob_tx),
+        ob_to_oblink(config, ob_rx, oblink_recv)
+    )?;
+
+    Ok(())
 }
 
 type ObLinkSource = mpsc::UnboundedReceiver<Frame>;
@@ -87,7 +80,7 @@ type ObSink = futures::stream::SplitSink<
 >;
 
 /// Forward OBLINK frame from OBLINK layer to OneBot impl.
-async fn oblink_to_ob(mut oblink: ObLinkSource, mut ob: ObSink) {
+async fn oblink_to_ob(config: &Config, mut oblink: ObLinkSource, mut ob: ObSink) -> Result<()> {
     // TODO: maybe to process packets concurrently in the future
     while let Some(frame) = oblink.next().await {
         assert!(!frame.destination().is_empty()); // the frame must have a destination
@@ -99,13 +92,13 @@ async fn oblink_to_ob(mut oblink: ObLinkSource, mut ob: ObSink) {
             );
             let frame_text_form = format!(
                 "{}{}",
-                config::MAGIC_PREFIX,
+                config.magic_prefix,
                 base64::encode(frame.packet.get_bytes())
             );
             let action = json!({
                 "action": "send_private_msg",
                 "params": {
-                    "user_id": frame.destination().parse::<i64>().unwrap(),
+                    "user_id": frame.destination().parse::<i64>()?,
                     "message": {
                         "type": "text",
                         "data": { "text": frame_text_form }
@@ -113,8 +106,7 @@ async fn oblink_to_ob(mut oblink: ObLinkSource, mut ob: ObSink) {
                 }
             });
             ob.send(tungstenite::Message::Text(action.to_string()))
-                .await
-                .unwrap();
+                .await?;
         } else {
             continue;
         }
@@ -123,10 +115,10 @@ async fn oblink_to_ob(mut oblink: ObLinkSource, mut ob: ObSink) {
 }
 
 /// Forward OBLINK frame from OneBot impl to OBLINK layer.
-async fn ob_to_oblink(mut ob: ObSource, mut oblink: ObLinkSink) {
+async fn ob_to_oblink(config: &Config, mut ob: ObSource, mut oblink: ObLinkSink) -> Result<()> {
     while let Some(Ok(ws_msg)) = ob.next().await {
         let payload = ws_msg.into_data();
-        let event: JsonValue = serde_json::from_slice(&payload).unwrap();
+        let event: JsonValue = serde_json::from_slice(&payload)?;
         if let (Some("message"), Some("private"), Some(user_id), Some(self_id), Some(message)) = (
             event["post_type"].as_str(),
             event["message_type"].as_str(),
@@ -135,8 +127,8 @@ async fn ob_to_oblink(mut ob: ObSource, mut oblink: ObLinkSink) {
             event["message"].as_str(),
         ) {
             println!("message from: {}, content: {}", user_id, message);
-            if message.starts_with(config::MAGIC_PREFIX) {
-                if let Ok(payload) = base64::decode(&message[config::MAGIC_PREFIX.len()..]) {
+            if message.starts_with(&config.magic_prefix) {
+                if let Ok(payload) = base64::decode(&message[config.magic_prefix.len()..]) {
                     if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(&payload) {
                         println!(
                             "receive packet src: {}, dst: {}, data: {}",
@@ -151,8 +143,7 @@ async fn ob_to_oblink(mut ob: ObSource, mut oblink: ObLinkSink) {
                             self_id.to_string(),
                             TunPacket::new(payload),
                         ))
-                        .await
-                        .unwrap();
+                        .await?;
                 }
             }
         }
