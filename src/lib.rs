@@ -14,6 +14,7 @@ pub struct Config {
     magic_prefix: String,
     max_msg_len: u32,
     mtu: u32,
+    netmask: String,
     self_ip: String,
     self_user_id: String,
     route_table: HashMap<String, String>,

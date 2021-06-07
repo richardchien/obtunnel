@@ -15,7 +15,7 @@ pub async fn tun_task(
     let mut tun_cfg = tun::Configuration::default();
     tun_cfg
         .address(&config.self_ip)
-        .netmask((255, 255, 255, 0))
+        .netmask(&config.netmask)
         .mtu(config.mtu as i32)
         .up();
 

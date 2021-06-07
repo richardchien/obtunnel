@@ -2,6 +2,8 @@ magic_prefix = "(>_<)..."
 max_msg_len = 4500
 mtu = 3369 # max = 3369
 
+netmask = "255.255.255.0"
+
 self_ip = "172.29.0.1"
 self_user_id = "3281334718"
 # self_ip = "172.29.0.2"
