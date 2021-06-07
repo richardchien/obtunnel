@@ -83,9 +83,9 @@ type ObSink = futures::stream::SplitSink<
 async fn oblink_to_ob(config: &Config, mut oblink: ObLinkSource, mut ob: ObSink) -> Result<()> {
     // TODO: maybe to process packets concurrently in the future
     while let Some(frame) = oblink.next().await {
-        assert!(!frame.destination().is_empty()); // the frame must have a destination
+        debug_assert!(!frame.destination().is_empty()); // the frame must have a destination
         if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(frame.packet().get_bytes()) {
-            assert_ne!(
+            debug_assert_ne!(
                 ip_pkt.source(),
                 ip_pkt.destination(),
                 "any packets that send to self should be handled in tun.rs"
@@ -126,17 +126,17 @@ async fn ob_to_oblink(config: &Config, mut ob: ObSource, mut oblink: ObLinkSink)
             event["self_id"].as_i64(),
             event["message"].as_str(),
         ) {
-            println!("message from: {}, content: {}", user_id, message);
+            // println!("message from: {}, content: {}", user_id, message);
             if message.starts_with(&config.magic_prefix) {
                 if let Ok(payload) = base64::decode(&message[config.magic_prefix.len()..]) {
-                    if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(&payload) {
-                        println!(
-                            "receive packet src: {}, dst: {}, data: {}",
-                            ip_pkt.source(),
-                            ip_pkt.destination(),
-                            hex::encode_upper(&payload)
-                        );
-                    }
+                    // if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(&payload) {
+                    //     println!(
+                    //         "receive packet src: {}, dst: {}, data: {}",
+                    //         ip_pkt.source(),
+                    //         ip_pkt.destination(),
+                    //         hex::encode_upper(&payload)
+                    //     );
+                    // }
                     oblink
                         .send(Frame::new(
                             user_id.to_string(),

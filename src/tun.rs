@@ -58,17 +58,16 @@ async fn tun_to_oblink(config: &Config, mut tun: TunSource, mut oblink: ObLinkSi
     // TODO: maybe to process packets concurrently in the future
     while let Some(Ok(packet)) = tun.next().await {
         if let Ok(ip::Packet::V4(ip_pkt)) = ip::Packet::new(packet.get_bytes()) {
-            println!(
-                "send packet src: {}, dst: {}, data: {}",
-                ip_pkt.source(),
-                ip_pkt.destination(),
-                hex::encode_upper(packet.get_bytes())
-            );
+            // println!(
+            //     "send packet src: {}, dst: {}, data: {}",
+            //     ip_pkt.source(),
+            //     ip_pkt.destination(),
+            //     hex::encode_upper(packet.get_bytes())
+            // );
 
             if ip_pkt.source() == ip_pkt.destination() {
                 println!("packet for self");
-                // TODO: send to self
-                // tun_tx.send(packet).await?;
+                continue;
             }
 
             if let Some(dest_user_id) = config.route_table.get(&ip_pkt.destination().to_string()) {
@@ -88,7 +87,7 @@ async fn tun_to_oblink(config: &Config, mut tun: TunSource, mut oblink: ObLinkSi
 /// Forward TUN packets from OBLINK layer to TUN device.
 async fn oblink_to_tun(_: &Config, mut oblink: ObLinkSource, mut tun: TunSink) -> Result<()> {
     while let Some(frame) = oblink.next().await {
-        println!("oblink frame to tun: {:#x?}", frame);
+        // println!("oblink frame to tun: {:#x?}", frame);
         tun.send(frame.into_packet()).await?;
     }
     panic!("oblink_to_tun stopped unexpectedly");
