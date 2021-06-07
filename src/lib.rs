@@ -17,7 +17,7 @@ pub struct Config {
     netmask: String,
     self_ip: String,
     self_user_id: String,
-    route_table: HashMap<String, String>,
+    ar_table: HashMap<String, String>,
     ws_url_table: HashMap<String, String>,
 }
 

@@ -70,7 +70,7 @@ async fn tun_to_oblink(config: &Config, mut tun: TunSource, mut oblink: ObLinkSi
                 continue;
             }
 
-            if let Some(dest_user_id) = config.route_table.get(&ip_pkt.destination().to_string()) {
+            if let Some(dest_user_id) = config.ar_table.get(&ip_pkt.destination().to_string()) {
                 oblink
                     .send(Frame::new_for_send(dest_user_id.to_owned(), packet))
                     .await?
